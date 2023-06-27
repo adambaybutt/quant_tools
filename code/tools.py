@@ -3,8 +3,8 @@ import numpy as np
 
 def input_checks(method):
     def wrapper(cls, returns, *args, **kwargs):
-        if not isinstance(returns, np.ndarray):
-            raise TypeError("Input 'returns' must be a NumPy array")
+        if not isinstance(returns, (np.ndarray, pd.Series)):
+            raise TypeError("Input 'returns' must be either a NumPy array or a Pandas Series")
         if np.isnan(returns).any():
             raise ValueError("Input 'returns' contains NaN values")
         if returns.size == 0:
