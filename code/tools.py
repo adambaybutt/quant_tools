@@ -212,59 +212,67 @@ class QuantTools:
         return average_turnover
 
     @classmethod
-    def formPortfolioPositionsQuantileLongShort(cls, 
-        df: pd.DataFrame, quantile: int, mcap_weighted: bool=False) -> pd.DataFrame:
+    def formPortfolioWeightsByQuantile(cls, 
+        df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False) -> pd.DataFrame:
         """
-        Form a new "position" column containing portfolio allocation percentages
+        Form a new "prtfl_wght_hml" column containing portfolio allocation percentages
         that sum to 0 within a date. Long the top quantile and short the bottom quantile,
         optionally weighted by market capitalization ("mcap").
 
         Args:
             df (pd.DataFrame): DataFrame with "date", "asset", "yhats", and optionally "mcap".
-            quantile (int): Number of quantiles to form.
-            mcap_weighted (bool): Whether to weight positions by market capitalization.
+            num_qntls_prtls (int): Number of quantiles to form.
+            mcap_weighted (bool): Whether to weight prtfl_wght_hml by market capitalization.
 
         Returns:
-            pd.DataFrame: Modified DataFrame with "position" column.
+            pd.DataFrame: Modified DataFrame with "prtfl_wght_hml" column.
         """
         
         # Validate input
         required_columns = ['date', 'asset', 'yhats'] + (['mcap'] if mcap_weighted else [])
-        if not (set(required_columns) <= set(df.columns)) or quantile < 2:
-            raise ValueError(f"Input DataFrame must contain columns {required_columns}, and 'quantile' must be greater than 1")
+        if not (set(required_columns) <= set(df.columns)) or num_qntls_prtls < 2:
+            raise ValueError(f"Input DataFrame must contain columns {required_columns}, and 'num_qntls_prtls' must be greater than 1")
     
         # Run check on input args
-        if not isinstance(quantile, int) or quantile < 2:
-            raise ValueError("Input 'quantile' must be an integer greater than 1")
+        if not isinstance(num_qntls_prtls, int) or num_qntls_prtls < 2:
+            raise ValueError("Input 'num_qntls_prtls' must be an integer greater than 1")
         
         # Randomly sort the DataFrame and then by yhats to randomly assign ties
         df = df.sample(frac=1).sort_values(by=['date', 'yhats'], ignore_index=True)
 
         # Calculate quantiles based on a noisy yhat
-        quantiles = df.groupby('date')['yhats'].transform(
-            lambda x: pd.qcut(x + np.random.uniform(-1e-10, 1e-10, size=len(x)), quantile, labels=False))
+        df['quantile'] = df.groupby('date')['yhats'].transform(
+            lambda x: 1+pd.qcut(x + np.random.uniform(-1e-10, 1e-10, size=len(x)), num_qntls_prtls, labels=False))
 
         # Assign long or short sign
-        df['position'] = np.where(quantiles == 0, -1, np.where(quantiles == quantile-1, 1, 0))
+        df['prtfl_wght_hml'] = np.where(df['quantile'] == 1, -1, np.where(df['quantile'] == num_qntls_prtls, 1, 0))
 
-        # Update position to equal weighted or mcap weighted 
+        # Update prtfl_wght_hml to equal weighted or mcap weighted 
         if mcap_weighted:
-            df['position'] *= df['mcap']
-            df['position'] = df.groupby('date', group_keys=False)['position'].apply(lambda x: x / x.abs().sum())
-        else:
-            df['position'] = df.groupby(
-                ['date', 'position'])['position'].transform(lambda x: x / x.count())
+            # Form high minus low portfolio weight
+            df['prtfl_wght_hml'] *= df['mcap']
+            df['prtfl_wght_hml'] = df.groupby(['date', 'quantile'], group_keys=False)['prtfl_wght_hml'].apply(lambda x: x / x.abs().sum())
+            df.loc[df.prtfl_wght_hml.isnull(), 'prtfl_wght_hml'] = 0
 
-        # Check that the position column sums to 1 within each date
-        assert (all(np.isclose(df.groupby('date')['position'].sum(), 0)), 
-                "Position column sums do not equal 0 for all dates")
+            # Also form portfolio weight within each quantile
+            df['prtfl_wght_mcap'] = df.groupby(['date', 'quantile'], group_keys=False)['mcap'].apply(lambda x: x / x.sum())
+
+            # Check that the prtfl_wght column sums to 1 within each date-quantile
+            assert all(np.isclose(df.groupby(['date', 'quantile'])['prtfl_wght_mcap'].sum(), 1)), \
+                "prtfl_wght_mcap column sums do not equal 1 for all date-quantiles"
+        else:
+            df['prtfl_wght_hml'] = df.groupby(
+                ['date', 'prtfl_wght_hml'])['prtfl_wght_hml'].transform(lambda x: x / x.count())
+
+        # Check that the prtfl_wght_hml column sums to 1 within each date
+        assert len(np.unique(df.date.values)) == np.sum(np.isclose(df.groupby('date')['prtfl_wght_hml'].sum(), 0)), \
+            "prtfl_wght_hml column sums do not equal 0 for all dates"
 
         # Sort the DataFrame by date and asset
         df = df.sort_values(by=['date', 'asset'], ignore_index=True)
 
         # Return DataFrame with relevant columns
-        return (df[['date', 'asset', 'yhats', 'position', 'mcap']] if mcap_weighted 
-                else df[['date', 'asset', 'yhats', 'position']])
+        return df
 
     @classmethod
     def calcR2Pred(cls, ys: np.array, yhats: np.array) -> float:
@@ -273,7 +281,7 @@ class QuantTools:
 
         :param ys: numpy array of actual target values
         :param yhats: numpy array of predicted target values
-        
+
         :return: R-squared prediction value
         """
         residual_variance = np.mean(np.square(ys - yhats))
