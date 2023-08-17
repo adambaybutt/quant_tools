@@ -137,7 +137,7 @@ class QuantTools:
             risk_free_returns (np.array): vector of simple returns of the risk free rate.
 
         Returns:
-            (float): scalar standard deviation.
+            (float): scalar annualized Sharpe ratio.
         """
         # run checks on input args and adjust returns if risk free given
         cls.period_check(False, periods_in_year)
@@ -178,8 +178,8 @@ class QuantTools:
         
         return max_drawdown
 
-    @classmethod
-    def calcTSAvgTurnover(cls, df: pd.DataFrame) -> float:
+    @staticmethod
+    def calcTSAvgTurnover(df: pd.DataFrame) -> float:
         """
         This function takes a pandas DataFrame with columns "date", "asset", and "position" and
         calculates the average turnover, which is defined as the time series average of the percentage
@@ -211,23 +211,46 @@ class QuantTools:
 
         return average_turnover
 
-    @classmethod
-    def formPortfolioWeightsByQuantile(cls, 
-        df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False) -> pd.DataFrame:
+    @staticmethod
+    def calcTStatReturns(returns: np.array, null: float = 0) -> float:
         """
-        Form a new "prtfl_wght_hml" column containing portfolio allocation percentages
-        that sum to 0 within a date. Long the top quantile and short the bottom quantile,
-        optionally weighted by market capitalization ("mcap").
+        Calculate the t-statistic for a vector of simple returns using the formula:
+        t = sqrt(N) * (mean_return - null) / std_dev_return
 
         Args:
-            df (pd.DataFrame): DataFrame with "date", "asset", "yhats", and optionally "mcap".
-            num_qntls_prtls (int): Number of quantiles to form.
-            mcap_weighted (bool): Whether to weight prtfl_wght_hml by market capitalization.
+            returns (np.array): vector of a simple returns at any frequency.
+            null (float): null hypothesis value.
 
         Returns:
-            pd.DataFrame: Modified DataFrame with "prtfl_wght_hml" column.
+            (float): scalar t-statistic.
         """
-        
+        mean_return = QuantTools.calcTSAvgReturn(returns)
+        std_dev_return = QuantTools.calcSD(returns)
+
+        if std_dev_return == 0:
+            raise ValueError("Standard deviation is zero, cannot calculate t-statistic.")
+
+        sample_size = len(returns)
+
+        return (np.sqrt(sample_size) * (mean_return - null) / std_dev_return)
+
+    @staticmethod
+    def formPortfolioWeightsByQuantile(
+        df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False
+        ) -> pd.DataFrame:
+        """
+        Creates a new column "prtfl_wght_hml" representing portfolio allocation percentages
+        within a date, long the top quantile and short the bottom quantile, and optionally 
+        weighted by market capitalization ("mcap").
+
+        Args:
+            df (pd.DataFrame): DataFrame containing "date", "asset", "yhats", and optionally "mcap".
+            num_qntls_prtls (int): Number of quantiles to form (must be greater than 1).
+            mcap_weighted (bool): If True, weight "prtfl_wght_hml" by market capitalization.
+
+        Returns:
+            pd.DataFrame: Modified DataFrame with new portfolio weight column(s).
+        """
         # Validate input
         required_columns = ['date', 'asset', 'yhats'] + (['mcap'] if mcap_weighted else [])
         if not (set(required_columns) <= set(df.columns)) or num_qntls_prtls < 2:
@@ -274,8 +297,8 @@ class QuantTools:
         # Return DataFrame with relevant columns
         return df
 
-    @classmethod
-    def calcR2Pred(cls, ys: np.array, yhats: np.array) -> float:
+    @staticmethod
+    def calcR2Pred(ys: np.array, yhats: np.array) -> float:
         """
         Calculates the R-squared prediction value.
 
