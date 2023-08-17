@@ -242,30 +242,33 @@ class QuantTools:
         # Subset to required info
         df = df[['date', 'asset', pos_col]].copy()
 
+        # Update the position column to contain simply the sign
+        df[pos_col] = np.sign(df[pos_col])
+
         # Sort the DataFrame by date and asset
         df = df.sort_values(by=['date', 'asset'])
 
         # Obtain the previous position
-        temp_df = df[['date', 'asset', pos_col]].copy()
-        dates = list(np.unique(temp_df.date.values))
+        prev_df = df[['date', 'asset', pos_col]].copy()
+        dates = list(np.unique(prev_df.date.values))
         first_date = dates[0]
         second_date = dates[1]
-        temp_df['date'] += second_date - first_date
-        temp_df = temp_df.rename(columns={pos_col: 'prev_pos'})
+        prev_df['date'] += second_date - first_date
+        prev_df = prev_df.rename(columns={pos_col: 'prev_pos'})
 
         # Merge previous position onto current position and fill missings
-        df = df.merge(temp_df, on=['date', 'asset'], how='outer', validate='one_to_one')
+        df = df.merge(prev_df, on=['date', 'asset'], how='outer', validate='one_to_one')
         df.loc[df[pos_col].isnull(), pos_col] = 0
         df.loc[df.prev_pos.isnull(), 'prev_pos'] = 0
 
-        # Calc change in portfolio weights for each date-asset
-        df['prtfl_wght_delta'] = np.abs(df[pos_col] - df['prev_pos'])
+        # Calc change in portfolio position for each date-asset
+        df['prtfl_wght_delta'] = 1*(df[pos_col] != df['prev_pos'])
 
         # Calc turnover for each date
-        to_df = df.groupby('date')[['prtfl_wght_delta']].sum()
+        to_df = df.groupby('date')['prtfl_wght_delta'].apply(lambda x: np.sum(x)/len(x))
 
         # Return the average turnover at frequency of given data
-        return to_df.prtfl_wght_delta.mean()
+        return np.mean(to_df.values)
 
     @staticmethod
     def calcTStatReturns(returns: np.array, null: float = 0) -> float:
