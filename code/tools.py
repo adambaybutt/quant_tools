@@ -264,24 +264,24 @@ class QuantTools:
         df = df.sample(frac=1).sort_values(by=['date', 'yhats'], ignore_index=True)
 
         # Calculate quantiles based on a noisy yhat
-        df['quantile'] = df.groupby('date')['yhats'].transform(
+        df['qntl'] = df.groupby('date')['yhats'].transform(
             lambda x: 1+pd.qcut(x + np.random.uniform(-1e-10, 1e-10, size=len(x)), num_qntls_prtls, labels=False))
 
         # Assign long or short sign
-        df['prtfl_wght_hml'] = np.where(df['quantile'] == 1, -1, np.where(df['quantile'] == num_qntls_prtls, 1, 0))
+        df['prtfl_wght_hml'] = np.where(df['qntl'] == 1, -1, np.where(df['qntl'] == num_qntls_prtls, 1, 0))
 
         # Update prtfl_wght_hml to equal weighted or mcap weighted 
         if mcap_weighted:
             # Form high minus low portfolio weight
             df['prtfl_wght_hml'] *= df['mcap']
-            df['prtfl_wght_hml'] = df.groupby(['date', 'quantile'], group_keys=False)['prtfl_wght_hml'].apply(lambda x: x / x.abs().sum())
+            df['prtfl_wght_hml'] = df.groupby(['date', 'qntl'], group_keys=False)['prtfl_wght_hml'].apply(lambda x: x / x.abs().sum())
             df.loc[df.prtfl_wght_hml.isnull(), 'prtfl_wght_hml'] = 0
 
             # Also form portfolio weight within each quantile
-            df['prtfl_wght_mcap'] = df.groupby(['date', 'quantile'], group_keys=False)['mcap'].apply(lambda x: x / x.sum())
+            df['prtfl_wght_mcap'] = df.groupby(['date', 'qntl'], group_keys=False)['mcap'].apply(lambda x: x / x.sum())
 
             # Check that the prtfl_wght column sums to 1 within each date-quantile
-            assert all(np.isclose(df.groupby(['date', 'quantile'])['prtfl_wght_mcap'].sum(), 1)), \
+            assert all(np.isclose(df.groupby(['date', 'qntl'])['prtfl_wght_mcap'].sum(), 1)), \
                 "prtfl_wght_mcap column sums do not equal 1 for all date-quantiles"
         else:
             df['prtfl_wght_hml'] = df.groupby(
