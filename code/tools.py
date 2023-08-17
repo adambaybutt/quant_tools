@@ -216,37 +216,56 @@ class QuantTools:
         return max_drawdown
 
     @staticmethod
-    def calcTSAvgTurnover(df: pd.DataFrame) -> float:
+    def calcTSAvgTurnover(df: pd.DataFrame, pos_col: str) -> float:
         """
-        This function takes a pandas DataFrame with columns "date", "asset", and "position" and
-        calculates the average turnover, which is defined as the time series average of the percentage
-        of assets each date that do not have the same position (-1, 0, 1) as the previous date for that asset.
-        
-        Args:
-            df (pd.DataFrame): A pandas DataFrame containing columns "date", "asset", and "position".
-        
+        Calculate the time-series average portfolio turnover.
+
+        This function takes a DataFrame containing dates, assets, and the positions in each asset at different points in time.
+        It then calculates the absolute changes in asset positions between consecutive dates, sums these changes for each date,
+        and returns the average turnover for the given panel of assets.
+
+        Parameters:
+        - df (pd.DataFrame): A DataFrame containing columns 'date', 'asset', and a position column specified by `pos_col`.
+        - pos_col (str): The name of the column in `df` that is the current portfolio weight for each asset.
+
         Returns:
-            float: The average turnover.
+        - float: The average portfolio turnover for the given panel of assets at its frequency.
+
+        Raises:
+        - ValueError: If the input DataFrame does not contain the required columns.
         """
         # Check dataframe has required columns
-        required_columns = ['date', 'asset', 'position']
+        required_columns = ['date', 'asset', pos_col]
         if not all(column in df.columns for column in required_columns):
             raise ValueError(f"Input DataFrame must contain columns {required_columns}")
-        
+
+        # Subset to required info
+        df = df[['date', 'asset', pos_col]].copy()
+
         # Sort the DataFrame by date and asset
         df = df.sort_values(by=['date', 'asset'])
 
-        # Shift the position column to get the previous position for each asset
-        df['prev_position'] = df.groupby('asset')['position'].shift(1)
+        # Obtain the previous position
+        temp_df = df[['date', 'asset', pos_col]].copy()
+        dates = list(np.unique(temp_df.date.values))
+        first_date = dates[0]
+        second_date = dates[1]
+        temp_df['date'] += second_date - first_date
+        temp_df = temp_df.rename(columns={pos_col: 'prev_pos'})
 
-        # Calculate the percentage of assets each date that do not have the same position as the previous date
-        df['position_changed'] = np.where(df['position'] != df['prev_position'], 1, 0)
-        turnover_pct = df.groupby('date')['position_changed'].mean()
+        # Merge previous position onto current position and fill missings
+        df = df.merge(temp_df, on=['date', 'asset'], how='outer', validate='one_to_one')
+        df.loc[df[pos_col].isnull(), pos_col] = 0
+        df.loc[df.prev_pos.isnull(), 'prev_pos'] = 0
 
-        # Calculate the time series average of the percentage of assets with changed positions
-        average_turnover = turnover_pct.mean()
+        # Calc change in portfolio weights for each date-asset
+        df['prtfl_wght_delta'] = np.abs(df[pos_col] - df['prev_pos'])
 
-        return average_turnover
+        # Calc turnover for each date
+        to_df = df.groupby('date')[['prtfl_wght_delta']].sum()
+
+        # Return the average turnover at frequency of given data
+        return to_df.prtfl_wght_delta.mean()
 
     @staticmethod
     def calcTStatReturns(returns: np.array, null: float = 0) -> float:
