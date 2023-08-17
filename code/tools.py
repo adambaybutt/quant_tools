@@ -46,6 +46,38 @@ class QuantTools:
     
     @classmethod
     @input_checks
+    def calcCumulativeReturn(cls, returns: np.array,
+        annualized: bool=False,
+        periods_in_year: int=None) -> float: 
+        """ Calculate the cumulative return of a vector of simple returns.
+
+        Args:
+            returns (np.array): vector of a simple returns at any frequency.
+            annualized (bool): whether to annualize the statistic.
+            periods_in_year (int): how many periods of the given frequency are in a year.
+
+        Returns:
+            (float): scalar cumulative return, annualized if requested.
+        """
+        # Run checks on input args
+        cls.period_check(annualized, periods_in_year)
+        
+        # Calc
+        cumulative_return = np.prod(1 + returns) - 1
+        
+        # Annualized
+        if annualized:
+            num_years_of_returns = len(returns) / periods_in_year
+            cum_ret_annl = cumulative_return / num_years_of_returns
+            if cum_ret_annl < -1:
+                return -1
+            else:
+                return cum_ret_annl
+        else:
+            return cumulative_return
+    
+    @classmethod
+    @input_checks
     def calcTSAvgReturn(cls, returns: np.array,
         annualized: bool=False,
         periods_in_year: int=None) -> float:
@@ -180,53 +212,57 @@ class QuantTools:
         return average_turnover
 
     @classmethod
-    def formPortfolioPositionsQuantileLongShort(cls, df: pd.DataFrame, quantile: int) -> pd.DataFrame:
+    def formPortfolioPositionsQuantileLongShort(cls, 
+        df: pd.DataFrame, quantile: int, mcap_weighted: bool=False) -> pd.DataFrame:
         """
-        This function takes a pandas DataFrame with columns "date", "asset", and "yhats" and performs
-        the specified steps to form a new column "position" containing portfolio allocation percentages
-        that sum to 0 within date where we long the top quantile and short the bottom quantile.
-        The function then returns the modified DataFrame with the four columns.
-        
-        Args:
-            df (pd.DataFrame): A pandas DataFrame containing columns "date", "asset", and "yhats".
-        
-        Returns:
-            pd.DataFrame: The modified DataFrame with an additional "position" column.
-        """
-        # Run checks on input data
-        required_columns = ['date', 'asset', 'yhats']
-        if not all(column in df.columns for column in required_columns):
-            raise ValueError(f"Input DataFrame must contain columns {required_columns}")
+        Form a new "position" column containing portfolio allocation percentages
+        that sum to 0 within a date. Long the top quantile and short the bottom quantile,
+        optionally weighted by market capitalization ("mcap").
 
+        Args:
+            df (pd.DataFrame): DataFrame with "date", "asset", "yhats", and optionally "mcap".
+            quantile (int): Number of quantiles to form.
+            mcap_weighted (bool): Whether to weight positions by market capitalization.
+
+        Returns:
+            pd.DataFrame: Modified DataFrame with "position" column.
+        """
+        
+        # Validate input
+        required_columns = ['date', 'asset', 'yhats'] + (['mcap'] if mcap_weighted else [])
+        if not (set(required_columns) <= set(df.columns)) or quantile < 2:
+            raise ValueError(f"Input DataFrame must contain columns {required_columns}, and 'quantile' must be greater than 1")
+    
+        # Run check on input args
         if not isinstance(quantile, int) or quantile < 2:
             raise ValueError("Input 'quantile' must be an integer greater than 1")
         
         # Randomly sort the DataFrame and then by yhats to randomly assign ties
-        df = df.sample(frac=1).reset_index(drop=True)
-        df = df.sort_values(by=['date', 'yhats'])
+        df = df.sample(frac=1).sort_values(by=['date', 'yhats'], ignore_index=True)
 
-        # Add a small random noise to yhats to handle potential duplicated values
-        df['yhats_noisy'] = df['yhats'] + np.random.uniform(-1e-10, 1e-10, size=len(df))
+        # Calculate quantiles based on a noisy yhat
+        quantiles = df.groupby('date')['yhats'].transform(
+            lambda x: pd.qcut(x + np.random.uniform(-1e-10, 1e-10, size=len(x)), quantile, labels=False))
 
-        # Calculate quantiles
-        quantiles = df.groupby('date')['yhats_noisy'].transform(lambda x: pd.qcut(x, quantile, labels=False))
-
-        # Assign positions
+        # Assign long or short sign
         df['position'] = np.where(quantiles == 0, -1, np.where(quantiles == quantile-1, 1, 0))
 
-        # Divide the positions column by how many assets are in each date
-        df['position'] = df.groupby(['date', 'position'])['position'].transform(lambda x: x / x.count())
+        # Update position to equal weighted or mcap weighted 
+        if mcap_weighted:
+            df['position'] *= df['mcap']
+            df['position'] = df.groupby('date')['position'].apply(lambda x: x / x.abs().sum())
+        else:
+            df['position'] = df.groupby(
+                ['date', 'position'])['position'].transform(lambda x: x / x.count())
 
         # Check that the position column sums to 1 within each date
-        position_sums = df.groupby('date')['position'].sum()
-        assert (all(np.isclose(position_sums, 0)), 
-                f"Position column sums do not equal 1 for all dates: {position_sums[np.isclose(position_sums, 0)]}")
-
-        # Drop the noisy yhats column
-        df = df.drop(columns=['yhats_noisy'])
+        assert (all(np.isclose(df.groupby('date')['position'].sum(), 0)), 
+                "Position column sums do not equal 0 for all dates")
 
         # Sort the DataFrame by date and asset
-        df = df.sort_values(by=['date', 'asset'])
+        df = df.sort_values(by=['date', 'asset'], ignore_index=True)
 
-        return df
-    
+        # Return DataFrame with relevant columns
+        return (df[['date', 'asset', 'yhats', 'position', 'mcap']] if mcap_weighted 
+                else df[['date', 'asset', 'yhats', 'position']])
+
