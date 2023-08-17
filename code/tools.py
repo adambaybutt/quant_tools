@@ -266,3 +266,17 @@ class QuantTools:
         return (df[['date', 'asset', 'yhats', 'position', 'mcap']] if mcap_weighted 
                 else df[['date', 'asset', 'yhats', 'position']])
 
+    @classmethod
+    def calcR2Pred(cls, ys: np.array, yhats: np.array) -> float:
+        """
+        Calculates the R-squared prediction value.
+
+        :param ys: numpy array of actual target values
+        :param yhats: numpy array of predicted target values
+        
+        :return: R-squared prediction value
+        """
+        residual_variance = np.mean(np.square(ys - yhats))
+        total_variance = np.mean(np.square(ys))
+        
+        return 1 - residual_variance / total_variance
