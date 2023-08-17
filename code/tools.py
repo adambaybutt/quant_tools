@@ -370,3 +370,114 @@ class QuantTools:
         total_variance = np.mean(np.square(ys))
         
         return 1 - residual_variance / total_variance
+
+    @staticmethod
+    def calcPortfolioStatistics(
+        df: pd.DataFrame, lhs_col: str, yhats_col: str, cmkt_col: str, 
+        model_name: str, num_qntls_prtls: int, periods_in_year: int, mcap_weighted: bool
+        ) -> pd.DataFrame:
+        # Initialize results object
+        results_df = pd.DataFrame(index=[0,1], data={'model': 2*[model_name]})
+
+        # Initialize quantile labels
+        top_quantile = num_qntls_prtls
+        bottom_quantile = 1
+
+        # Add predictive r2
+        results_df.loc[0, 'r2_pred'] = QuantTools.calcR2Pred(
+            df[lhs_col].values, df[yhats_col].values)
+
+        # Form position column
+        pos_df = QuantTools.formPortfolioWeightsByQuantile(df, num_qntls_prtls, mcap_weighted)
+
+        # Form returns for each date-quantile
+        if mcap_weighted:
+            pos_df['returns'] = pos_df['prtfl_wght_mcap'] * pos_df[lhs_col]
+            date_quant_rtrns_df = pos_df.groupby(['date', 'qntl'])[['returns']].sum().reset_index()
+        else:
+            date_quant_rtrns_df = pos_df.groupby(['date', 'qntl'])[[lhs_col]].mean().reset_index()
+            date_quant_rtrns_df = date_quant_rtrns_df.rename(columns={lhs_col: 'returns'})
+
+        # Form returns for high minus low strategy for each date
+        pos_df['returns_hml'] = pos_df['prtfl_wght_hml'] * pos_df[lhs_col]
+        date_hml_rtrns_df = pos_df.groupby('date')[['returns_hml']].sum().reset_index()
+        date_hml_rtrns_df = date_hml_rtrns_df.rename(columns={'returns_hml': 'returns'})
+
+        # Calc ts avg and t stats for each quantile
+        quantile_arith_avg_ret_df = date_quant_rtrns_df.groupby('qntl')[['returns']].mean().reset_index()
+        quantile_tstats_series = date_quant_rtrns_df.groupby('qntl')['returns'].apply(lambda x: QuantTools.calcTStatReturns(x))
+
+        # Calc ts avg and t stat for high minus low portfolio
+        hml_return = np.round(QuantTools.calcTSAvgReturn(date_hml_rtrns_df.returns), 4)
+        hml_tstat  = np.round(QuantTools.calcTStatReturns(date_hml_rtrns_df.returns), 2)
+
+        # Add return and t stat by quantile to results dataframe
+        quantile_returns = np.round(quantile_arith_avg_ret_df.returns.values, 4)
+        quantile_tstats = np.round(quantile_tstats_series.values, 2)
+        for qntl in range(1,1+num_qntls_prtls):
+            qntl_return = quantile_returns[qntl-1]
+            t_stat = quantile_tstats[qntl-1]
+            results_df.loc[1, str(qntl)] = '('+str(t_stat)+')'
+            if np.abs(t_stat) > 2.576:
+                results_df.loc[0, str(qntl)] = str(qntl_return)+"***"
+            elif np.abs(t_stat) > 1.96:
+                results_df.loc[0, str(qntl)] = str(qntl_return)+"**"
+            elif np.abs(t_stat) > 1.645:
+                results_df.loc[0, str(qntl)] = str(qntl_return)+"*"
+            else:
+                results_df.loc[0, str(qntl)] = str(qntl_return)
+
+        # Add return and t stat for hml strat to results
+        results_df.loc[1, str(top_quantile)+'-'+str(bottom_quantile)] = '('+str(hml_tstat)+')'
+        if np.abs(hml_tstat) > 2.576:
+            results_df.loc[0, str(top_quantile)+'-'+str(bottom_quantile)] = str(hml_return)+"***"
+        elif np.abs(hml_tstat) > 1.96:
+            results_df.loc[0, str(top_quantile)+'-'+str(bottom_quantile)] = str(hml_return)+"**"
+        elif np.abs(hml_tstat) > 1.645:
+            results_df.loc[0, str(top_quantile)+'-'+str(bottom_quantile)] = str(hml_return)+"*"
+        else:
+            results_df.loc[0, str(top_quantile)+'-'+str(bottom_quantile)] = str(hml_return)
+
+        # Add other statistics
+        results_df.loc[0, 'sharpe'] = np.round(QuantTools.calcSharpe(date_hml_rtrns_df.returns, periods_in_year), 2)
+        results_df.loc[0, 'sortino'] = np.round(QuantTools.calcSortino(date_hml_rtrns_df.returns, periods_in_year), 2)
+        results_df.loc[0, 'turnover'] = np.round(QuantTools.calcTSAvgTurnover(pos_df, pos_col='prtfl_wght_hml'), 2)
+        results_df.loc[0, 'mdd'] = np.round(QuantTools.calcMaxDrawdown(date_hml_rtrns_df.returns), 4)
+        results_df.loc[0, 'geom_mean'] = np.round(QuantTools.calcGeomAvg(date_hml_rtrns_df.returns), 4)
+        results_df.loc[0, 'geom_mean_annual'] = np.round(QuantTools.calcGeomAvg(date_hml_rtrns_df.returns, 
+            annualized=True, periods_in_year=periods_in_year), 4)
+
+        # Form dataframe for the alpha and beta calcs of hml strat
+        cmkt_df = df[['date', cmkt_col]].drop_duplicates().dropna().copy()
+        date_hml_rtrns_df = date_hml_rtrns_df.merge(cmkt_df, on=['date'], how='inner', validate='one_to_one')
+
+        # Calculate the hml strategy alpha and beta
+        y = date_hml_rtrns_df.returns
+        x = date_hml_rtrns_df[cmkt_col]
+        X = sm.add_constant(x)
+
+        model   = sm.OLS(y, X)
+        results = model.fit()
+
+        # Extract and save results for alpha and beta
+        for i in range(0,2):
+            if i == 0:
+                col = 'alpha'
+            else:
+                col = 'beta'
+
+            coef  = str(np.round(results.params[i], 4))
+            se    = '('+str(np.round(results.bse[i], 4))+')'
+            t_stat = results.tvalues[i]
+
+            if np.abs(t_stat) >= 2.576:
+                coef += '***'
+            elif np.abs(t_stat) >= 1.96:
+                coef += '**'
+            elif np.abs(t_stat) >= 1.645:
+                coef += '*'
+
+            results_df.loc[0, col] = coef # 0 is first row; for both alpha and beta
+            results_df.loc[1, col] = se   # 1 is second row; for both alpha and beta
+        
+        return results_df
