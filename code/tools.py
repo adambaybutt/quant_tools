@@ -375,8 +375,8 @@ class QuantTools:
     @staticmethod
     def calcPortfolioStatistics(
         df: pd.DataFrame, lhs_col: str, yhats_col: str, cmkt_col: str, 
-        model_name: str, num_qntls_prtls: int, periods_in_year: int, mcap_weighted: bool
-        ) -> pd.DataFrame:
+        model_name: str, num_qntls_prtls: int, periods_in_year: int, mcap_weighted: bool,
+        tc_cost: float=0) -> pd.DataFrame:
         """
         Calculates various portfolio statistics including predictive r2, returns, t-stats,
         Sharpe ratio, Sortino ratio, turnover, maximum drawdown, geometric mean, alpha, and beta.
@@ -389,6 +389,7 @@ class QuantTools:
         :param num_qntls_prtls: Number of quantiles for portfolio
         :param periods_in_year: Number of periods in a year
         :param mcap_weighted: Flag to indicate if market capitalization is weighted
+        :param tc_cst: float in bps to take out of each period's return for a given strat.
 
         :return: A DataFrame with the calculated statistics
         """
@@ -418,14 +419,19 @@ class QuantTools:
         pos_df['returns_hml'] = pos_df['prtfl_wght_hml'] * pos_df[lhs_col]
         date_hml_rtrns_df = pos_df.groupby('date')[['returns_hml']].sum().reset_index()
         date_hml_rtrns_df = date_hml_rtrns_df.rename(columns={'returns_hml': 'returns'})
+        hml_returns = date_hml_rtrns_df.returns.values
+        
+        # Remove transaction cost from hml returns if given
+        if tc_cost > 0:
+            hml_returns -= tc_cost
 
         # Calc ts avg and t stats for each quantile
         quantile_arith_avg_ret_df = date_quant_rtrns_df.groupby('qntl')[['returns']].mean().reset_index()
         quantile_tstats_series = date_quant_rtrns_df.groupby('qntl')['returns'].apply(lambda x: QuantTools.calcTStatReturns(x))
 
         # Calc ts avg and t stat for high minus low portfolio
-        hml_return = np.round(QuantTools.calcTSAvgReturn(date_hml_rtrns_df.returns), 4)
-        hml_tstat  = np.round(QuantTools.calcTStatReturns(date_hml_rtrns_df.returns), 2)
+        hml_return = np.round(QuantTools.calcTSAvgReturn(hml_returns), 4)
+        hml_tstat  = np.round(QuantTools.calcTStatReturns(hml_returns), 2)
 
         # Add return and t stat by quantile to results dataframe
         quantile_returns = np.round(quantile_arith_avg_ret_df.returns.values, 4)
@@ -455,12 +461,12 @@ class QuantTools:
             results_df.loc[0, str(top_quantile)+'-'+str(bottom_quantile)] = str(hml_return)
 
         # Add other statistics
-        results_df.loc[0, 'sharpe'] = np.round(QuantTools.calcSharpe(date_hml_rtrns_df.returns, periods_in_year), 2)
-        results_df.loc[0, 'sortino'] = np.round(QuantTools.calcSortino(date_hml_rtrns_df.returns, periods_in_year), 2)
+        results_df.loc[0, 'sharpe'] = np.round(QuantTools.calcSharpe(hml_returns, periods_in_year), 2)
+        results_df.loc[0, 'sortino'] = np.round(QuantTools.calcSortino(hml_returns, periods_in_year), 2)
         results_df.loc[0, 'turnover'] = np.round(QuantTools.calcTSAvgTurnover(pos_df, pos_col='prtfl_wght_hml'), 2)
-        results_df.loc[0, 'mdd'] = np.round(QuantTools.calcMaxDrawdown(date_hml_rtrns_df.returns), 4)
-        results_df.loc[0, 'geom_mean'] = np.round(QuantTools.calcGeomAvg(date_hml_rtrns_df.returns), 4)
-        results_df.loc[0, 'geom_mean_annual'] = np.round(QuantTools.calcGeomAvg(date_hml_rtrns_df.returns, 
+        results_df.loc[0, 'mdd'] = np.round(QuantTools.calcMaxDrawdown(hml_returns), 4)
+        results_df.loc[0, 'geom_mean'] = np.round(QuantTools.calcGeomAvg(hml_returns), 4)
+        results_df.loc[0, 'geom_mean_annual'] = np.round(QuantTools.calcGeomAvg(hml_returns, 
             annualized=True, periods_in_year=periods_in_year), 4)
 
         # Form dataframe for the alpha and beta calcs of hml strat
@@ -468,7 +474,7 @@ class QuantTools:
         date_hml_rtrns_df = date_hml_rtrns_df.merge(cmkt_df, on=['date'], how='inner', validate='one_to_one')
 
         # Calculate the hml strategy alpha and beta
-        y = date_hml_rtrns_df.returns
+        y = hml_returns
         x = date_hml_rtrns_df[cmkt_col]
         X = sm.add_constant(x)
 
