@@ -157,6 +157,43 @@ class QuantTools:
     
     @classmethod
     @input_checks
+    def calcSortino(cls, returns: np.array,
+        periods_in_year: int,
+        risk_free_returns: np.array=None,
+        target_return: float=0.0) -> float:
+        """ Calculate the annual Sortino Ratio of a vector of simple returns.
+
+        Args:
+            returns (np.array): vector of simple returns at any frequency.
+            periods_in_year (int): how many periods of the given frequency are in a year.
+            risk_free_returns (np.array): vector of simple returns of the risk-free rate.
+            target_return (float): target return level for downside deviation calculation.
+
+        Returns:
+            (float): scalar annualized Sortino ratio.
+        """
+        # run checks on input args and adjust returns if risk free given
+        cls.period_check(False, periods_in_year)
+        if risk_free_returns is not None:
+            if not isinstance(risk_free_returns, np.ndarray):
+                raise TypeError("Input 'risk_free_returns' must be a NumPy array")
+            if np.isnan(risk_free_returns).any():
+                raise ValueError("Input 'risk_free_returns' contains NaN values")
+            if risk_free_returns.size != returns.size:
+                raise ValueError("'returns' and 'risk_free_returns' must be of the same size")
+
+            returns = returns - risk_free_returns
+
+        # calculate downside returns
+        downside_returns = np.copy(returns)
+        downside_returns[returns > target_return] = 0
+
+        # calc Sortino
+        return (cls.calcTSAvgReturn(returns, annualized=True, periods_in_year=periods_in_year)
+                / cls.calcSD(downside_returns, annualized=True, periods_in_year=periods_in_year))
+
+    @classmethod
+    @input_checks
     def calcMaxDrawdown(cls, returns: np.array) -> float:
         ''' Calculate maximum drawdown for a vector of returns of any frequency.
 
