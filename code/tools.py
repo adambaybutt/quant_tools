@@ -250,7 +250,7 @@ class QuantTools:
         # Update position to equal weighted or mcap weighted 
         if mcap_weighted:
             df['position'] *= df['mcap']
-            df['position'] = df.groupby('date')['position'].apply(lambda x: x / x.abs().sum())
+            df['position'] = df.groupby('date', group_keys=False)['position'].apply(lambda x: x / x.abs().sum())
         else:
             df['position'] = df.groupby(
                 ['date', 'position'])['position'].transform(lambda x: x / x.count())
