@@ -1,3 +1,4 @@
+import statsmodels.api as sm
 import pandas as pd
 import numpy as np
 
@@ -376,6 +377,21 @@ class QuantTools:
         df: pd.DataFrame, lhs_col: str, yhats_col: str, cmkt_col: str, 
         model_name: str, num_qntls_prtls: int, periods_in_year: int, mcap_weighted: bool
         ) -> pd.DataFrame:
+        """
+        Calculates various portfolio statistics including predictive r2, returns, t-stats,
+        Sharpe ratio, Sortino ratio, turnover, maximum drawdown, geometric mean, alpha, and beta.
+
+        :param df: Dataframe containing the required data
+        :param lhs_col: Name of the left-hand-side column
+        :param yhats_col: Name of the predicted values column
+        :param cmkt_col: Name of the common market column
+        :param model_name: Name of the model
+        :param num_qntls_prtls: Number of quantiles for portfolio
+        :param periods_in_year: Number of periods in a year
+        :param mcap_weighted: Flag to indicate if market capitalization is weighted
+
+        :return: A DataFrame with the calculated statistics
+        """
         # Initialize results object
         results_df = pd.DataFrame(index=[0,1], data={'model': 2*[model_name]})
 
