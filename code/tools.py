@@ -296,7 +296,7 @@ class QuantTools:
 
     @staticmethod
     def formPortfolioWeightsByQuantile(
-        df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False
+        df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False, yhats_col: str='yhats'
         ) -> pd.DataFrame:
         """
         Creates a new column "prtfl_wght_hml" representing portfolio allocation percentages
@@ -304,15 +304,16 @@ class QuantTools:
         weighted by market capitalization ("mcap").
 
         Args:
-            df (pd.DataFrame): DataFrame containing "date", "asset", "yhats", and optionally "mcap".
+            df (pd.DataFrame): DataFrame containing "date", "asset", yhats_col, and optionally "mcap".
             num_qntls_prtls (int): Number of quantiles to form (must be greater than 1).
             mcap_weighted (bool): If True, weight "prtfl_wght_hml" by market capitalization.
+            yhats_col (str): name of the column containing the yhats.
 
         Returns:
             pd.DataFrame: Modified DataFrame with new portfolio weight column(s).
         """
         # Validate input
-        required_columns = ['date', 'asset', 'yhats'] + (['mcap'] if mcap_weighted else [])
+        required_columns = ['date', 'asset', yhats_col] + (['mcap'] if mcap_weighted else [])
         if not (set(required_columns) <= set(df.columns)) or num_qntls_prtls < 2:
             raise ValueError(f"Input DataFrame must contain columns {required_columns}, and 'num_qntls_prtls' must be greater than 1")
     
@@ -321,10 +322,10 @@ class QuantTools:
             raise ValueError("Input 'num_qntls_prtls' must be an integer greater than 1")
         
         # Randomly sort the DataFrame and then by yhats to randomly assign ties
-        df = df.sample(frac=1).sort_values(by=['date', 'yhats'], ignore_index=True)
+        df = df.sample(frac=1).sort_values(by=['date', yhats_col], ignore_index=True)
 
         # Calculate quantiles based on a noisy yhat
-        df['qntl'] = df.groupby('date')['yhats'].transform(
+        df['qntl'] = df.groupby('date')[yhats_col].transform(
             lambda x: 1+pd.qcut(x + np.random.uniform(-1e-10, 1e-10, size=len(x)), num_qntls_prtls, labels=False))
 
         # Assign long or short sign
@@ -405,7 +406,7 @@ class QuantTools:
             df[lhs_col].values, df[yhats_col].values)
 
         # Form position column
-        pos_df = QuantTools.formPortfolioWeightsByQuantile(df, num_qntls_prtls, mcap_weighted)
+        pos_df = QuantTools.formPortfolioWeightsByQuantile(df, num_qntls_prtls, mcap_weighted, yhats_col)
 
         # Form returns for each date-quantile
         if mcap_weighted:
