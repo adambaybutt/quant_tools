@@ -293,7 +293,34 @@ class QuantTools:
         sample_size = len(returns)
 
         return (np.sqrt(sample_size) * (mean_return - null) / std_dev_return)
+       
+    @staticmethod
+    def calcMSE(ys: np.array, yhats: np.array) -> float:
+        """
+        Calculates the mean squared error.
 
+        :param ys: numpy array of actual target values
+        :param yhats: numpy array of predicted target values
+
+        :return: mean squared prediction error.
+        """        
+        return np.mean(np.square(ys - yhats))
+    
+    @staticmethod
+    def calcR2Pred(ys: np.array, yhats: np.array) -> float:
+        """
+        Calculates the R-squared prediction value.
+
+        :param ys: numpy array of actual target values
+        :param yhats: numpy array of predicted target values
+
+        :return: R-squared prediction value
+        """
+        mse = QuantTools.calcMSE(ys, yhats)
+        total_variance = np.mean(np.square(ys))
+        
+        return 1 - mse / total_variance
+       
     @staticmethod
     def formPortfolioWeightsByQuantile(
         df: pd.DataFrame, num_qntls_prtls: int, mcap_weighted: bool=False, yhats_col: str='yhats'
@@ -310,7 +337,8 @@ class QuantTools:
             yhats_col (str): name of the column containing the yhats.
 
         Returns:
-            pd.DataFrame: Modified DataFrame with new portfolio weight column(s).
+            pd.DataFrame: Modified DataFrame with new portfolio weight column(s):
+                `prtfl_wght_hml' and, if mcap_weighted==True, `prtfl_wght_mcap'.
         """
         # Validate input
         required_columns = ['date', 'asset', yhats_col] + (['mcap'] if mcap_weighted else [])
@@ -341,7 +369,7 @@ class QuantTools:
             # Also form portfolio weight within each quantile
             df['prtfl_wght_mcap'] = df.groupby(['date', 'qntl'], group_keys=False)['mcap'].apply(lambda x: x / x.sum())
 
-            # Check that the prtfl_wght column sums to 1 within each date-quantile
+            # Check that the prtfl_wght_mcap column sums to 1 within each date-quantile
             assert all(np.isclose(df.groupby(['date', 'qntl'])['prtfl_wght_mcap'].sum(), 1)), \
                 "prtfl_wght_mcap column sums do not equal 1 for all date-quantiles"
         else:
@@ -357,21 +385,6 @@ class QuantTools:
 
         # Return DataFrame with relevant columns
         return df
-
-    @staticmethod
-    def calcR2Pred(ys: np.array, yhats: np.array) -> float:
-        """
-        Calculates the R-squared prediction value.
-
-        :param ys: numpy array of actual target values
-        :param yhats: numpy array of predicted target values
-
-        :return: R-squared prediction value
-        """
-        residual_variance = np.mean(np.square(ys - yhats))
-        total_variance = np.mean(np.square(ys))
-        
-        return 1 - residual_variance / total_variance
 
     @staticmethod
     def calcPortfolioStatistics(
@@ -475,8 +488,10 @@ class QuantTools:
         date_hml_rtrns_df = date_hml_rtrns_df.merge(cmkt_df, on=['date'], how='inner', validate='one_to_one')
 
         # Calculate the hml strategy alpha and beta
-        y = hml_returns
-        x = date_hml_rtrns_df[cmkt_col]
+        y = date_hml_rtrns_df.returns.values # make sure we get the same values; so this is pre tc
+        if tc_cost > 0:
+            y -= tc_cost
+        x = date_hml_rtrns_df[cmkt_col].values
         X = sm.add_constant(x)
 
         model   = sm.OLS(y, X)
